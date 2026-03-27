@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Engelden Kaç</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+html, body {
+    margin:0; padding:0;
+    width:100%; height:100%;
+    font-family:'Press Start 2P';
+    overflow:hidden;
+    background: url('img/arkaplanoyun.jpg') no-repeat center center;
+    background-size: cover;
+}
+canvas { position:absolute; top:0; left:0; pointer-events:none; }
+
+#menu, #gameOver {
+    position:absolute;
+    width:100%; height:100%;
+    display:flex; justify-content:center; align-items:center; flex-direction:column;
+    z-index:1;
+}
+#menu { color:white; }
+#title { font-size:36px; margin-bottom:30px; animation:pulse 1.5s infinite; text-shadow:2px 2px lime; }
+
+.menu-button {
+    padding:15px 50px; font-size:18px; margin:10px; cursor:pointer;
+    border:none; border-radius:20px;
+    background: linear-gradient(45deg,#00ff7f,#00bfff);
+    color:white; font-weight:bold;
+    transition: all 0.3s ease;
+    box-shadow:0 6px 15px rgba(0,0,0,0.3),0 0 10px rgba(0,255,255,0.2) inset;
+    text-shadow:1px 1px 2px rgba(0,0,0,0.5);
+}
+.menu-button:hover {
+    transform: scale(1.1) rotate(-2deg);
+    background: linear-gradient(45deg,#ff7f50,#ff69b4);
+    box-shadow:0 8px 20px rgba(0,0,0,0.5),0 0 15px rgba(255,255,255,0.3) inset;
+    text-shadow:2px 2px 4px rgba(0,0,0,0.6);
+}
+
+#player { width:128px; height:128px; position:absolute; bottom:20px; left:50%; image-rendering: pixelated; display:none; }
+.obj { width:64px; height:64px; position:absolute; top:0; image-rendering: pixelated; }
+#ui { position:fixed; top:10px; left:10px; color:white; display:none; font-size:16px; }
+
+#gameOver { color:red; display:none; }
+#gameOverText { font-size:28px; animation:shake 0.5s infinite; margin-bottom:30px; }
+
+@keyframes pulse {0%{transform:scale(1);}50%{transform:scale(1.1);}100%{transform:scale(1);}}
+@keyframes shake {0%{transform:translate(0);}25%{transform:translate(3px,0);}50%{transform:translate(-3px,0);}75%{transform:translate(3px,0);}100%{transform:translate(0);}}
+</style>
+</head>
+<body>
+
+<div id="menu">
+  <div id="title">ENGELDEN KAÇ</div>
+  <button id="startBtn" class="menu-button">OYUNA BAŞLA</button>
+  <button id="musicBtn" class="menu-button">MÜZİK: AÇIK</button>
+  <button id="effectsBtn" class="menu-button">EFEKT: AÇIK</button>
+</div>
+
+<div id="gameOver">
+  <div id="gameOverText">GAME OVER</div>
+  <button id="restartBtn" class="menu-button">TEKRAR DENE</button>
+</div>
+
+<img id="player" src="img/karakter.png" alt="Player" />
+<div id="ui"></div>
+<canvas id="particles"></canvas>
+
+<audio id="coinSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+<audio id="hitSound" src="https://actions.google.com/sounds/v1/impacts/crash.ogg"></audio>
+<audio id="heartSound" src="sn/kalp.mp3"></audio>
+<audio id="bgMusic" src="sn/bg.mp3"></audio>
+
+<script>
+let musicOn = true; let effectsOn = true;
+const bgMusic = document.getElementById("bgMusic");
+const coinSound = document.getElementById("coinSound");
+const hitSound = document.getElementById("hitSound");
+const heartSound = document.getElementById("heartSound");
+
+document.getElementById("musicBtn").onclick = ()=>{
+  musicOn = !musicOn;
+  document.getElementById("musicBtn").innerText = "MÜZİK: " + (musicOn?"AÇIK":"KAPALI");
+  if(musicOn) bgMusic.play(); else bgMusic.pause();
+};
+document.getElementById("effectsBtn").onclick = ()=>{
+  effectsOn = !effectsOn;
+  document.getElementById("effectsBtn").innerText = "EFEKT: " + (effectsOn?"AÇIK":"KAPALI");
+};
+
+// --- Partikül ---
+const canvas = document.getElementById('particles');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+let particles=[];
+function spawnParticle(x,y,color){particles.push({x,y,vx:(Math.random()-0.5)*2,vy:Math.random()*-2,alpha:1,color});}
+function updateParticles(){ 
+    ctx.clearRect(0,0,canvas.width,canvas.height); 
+    for(let i=particles.length-1;i>=0;i--){
+        let p=particles[i]; 
+        p.x+=p.vx; p.y+=p.vy; p.alpha-=0.02; p.vy+=0.05; 
+        ctx.fillStyle=`rgba(${p.color},${p.alpha})`; 
+        ctx.fillRect(p.x,p.y,8,8); 
+        if(p.alpha<=0) particles.splice(i,1); 
+    } 
+    requestAnimationFrame(updateParticles);
+}
+updateParticles();
+
+// --- Oyun ---
+let player = document.getElementById("player");
+let can, skor, hiz, oyunBasladi=false;
+let highScore = localStorage.getItem("hs") || 0;
+let spikeFrequency = 800;
+let spikeSpeed = 2;
+let diagonalMode = false;
+
+document.getElementById("startBtn").onclick=startGame;
+document.getElementById("restartBtn").onclick=()=>location.reload();
+
+let spriteFrames=["img/karakter1.png","img/karakter2.png","img/karakter3.png","img/karakter4.png"];
+let currentFrame=0;
+function animatePlayer(){if(!oyunBasladi) return; currentFrame=(currentFrame+1)%spriteFrames.length; player.src=spriteFrames[currentFrame]; setTimeout(animatePlayer,150);}
+
+// --- Patlama efektleri objeye göre ---
+let explosionFrames = {
+  spike: ["img/explosion1.png","img/explosion2.png","img/explosion3.png","img/explosion4.png"], // kırmızı
+  coin: ["img/coinEffect1.png","img/coinEffect2.png","img/coinEffect3.png","img/coinEffect4.png"], // sarı
+  heart: ["img/heartEffect1.png","img/heartEffect2.png","img/heartEffect3.png","img/heartEffect4.png"] // pembe
+};
+
+function spawnExplosion(x, y, type){
+  let frames = explosionFrames[type];
+  if(!frames) return;
+  let frame = 0;
+  let img = document.createElement("img");
+  img.style.position = "absolute";
+  img.style.width = "64px";
+  img.style.height = "64px";
+  img.style.left = x - 32 + "px";
+  img.style.top = y - 32 + "px";
+  img.style.imageRendering = "pixelated";
+  document.body.appendChild(img);
+
+  function animate(){
+    if(frame >= frames.length){ img.remove(); return; }
+    img.src = frames[frame];
+    frame++;
+    setTimeout(animate, 100);
+  }
+  animate();
+}
+
+function startGame(){
+  document.getElementById("menu").style.display="none";
+  player.style.display="block";
+  document.getElementById("ui").style.display="block";
+  can=3; skor=0; hiz=2; oyunBasladi=true;
+  document.body.style.background = "url('arkaplan_oyun.jpg') no-repeat center center";
+  document.body.style.backgroundSize = "cover";
+  if(musicOn) bgMusic.play();
+  animatePlayer();
+  spawnLoopDynamic();
+  gameLoop();
+}
+
+function spawnLoopDynamic(){
+  if(!oyunBasladi) return;
+
+  let r=Math.random(); let obj=document.createElement("img"); obj.classList.add("obj");
+
+  if(r<0.65){ obj.src="img/dikenn.png"; obj.classList.add("spike"); }
+  else if(r<0.95){ obj.src="img/coin.png"; obj.classList.add("coin"); }
+  else{ obj.src="img/kalp.png"; obj.classList.add("heart"); }
+
+  obj.style.left=Math.random()*window.innerWidth+'px';
+  document.body.appendChild(obj);
+
+  let y=0;
+  let dx = diagonalMode ? (Math.random()*2-1) : 0; 
+  let direction = Math.random() < 0.5 ? 1 : -1; 
+  if(!diagonalMode) dx = 0;
+
+  let fall=setInterval(()=>{
+    y+=spikeSpeed; 
+    let left = parseFloat(obj.style.left)+dx*direction;
+    if(left<0){ left=0; direction *= -1;}
+    if(left>window.innerWidth-obj.offsetWidth){ left=window.innerWidth-obj.offsetWidth; direction *= -1;}
+    obj.style.left = left+'px';
+    obj.style.top = y+'px';
+
+    let r1=obj.getBoundingClientRect(), r2=player.getBoundingClientRect();
+    if(r1.bottom>r2.top && r1.left<r2.right && r1.right>r2.left){
+      let cx=r2.left+r2.width/2, cy=r2.top+r2.height/2;
+
+      if(obj.classList.contains("spike")){
+        can--; 
+        spawnParticle(cx, cy, '255,0,0'); 
+        spawnExplosion(cx, cy, 'spike'); 
+        if(effectsOn) hitSound.play();
+      }
+      if(obj.classList.contains("coin")){
+        skor+=20; 
+        spawnParticle(cx, cy, '255,255,0'); 
+        spawnExplosion(cx, cy, 'coin'); 
+        if(effectsOn) coinSound.play();
+      }
+      if(obj.classList.contains("heart")){
+        can++; 
+        spawnParticle(cx, cy, '255,192,203'); 
+        spawnExplosion(cx, cy, 'heart'); 
+        if(effectsOn) heartSound.play();
+      }
+
+      obj.remove(); clearInterval(fall);
+    }
+    if(y>window.innerHeight){ obj.remove(); clearInterval(fall); }
+  },20);
+
+  setTimeout(spawnLoopDynamic, spikeFrequency);
+}
+
+function gameLoop(){
+  setInterval(()=>{
+    if(!oyunBasladi) return;
+    skor++; hiz+=0.005;
+
+    if(skor%500==0){
+      if(spikeFrequency>200) spikeFrequency -= 50;
+      spikeSpeed += 0.5;
+    }
+
+    if(skor>=700) diagonalMode = true;
+
+    if(skor>highScore){ highScore=skor; localStorage.setItem("hs",highScore);}
+    document.getElementById("ui").innerText=`CAN: ${can}  SKOR: ${skor}  HS: ${highScore}`;
+    if(can<=0){ 
+      oyunBasladi=false; 
+      document.getElementById("gameOver").style.display="flex"; 
+      spawnParticle(player.offsetLeft,player.offsetTop,'255,0,0');
+    }
+  },100);
+}
+
+function movePlayer(x){ 
+  let left=x-player.offsetWidth/2; 
+  if(left<0) left=0; 
+  if(left>window.innerWidth-player.offsetWidth) left=window.innerWidth-player.offsetWidth; 
+  player.style.left=left+'px';
+}
+document.addEventListener("mousemove",e=>movePlayer(e.clientX));
+document.addEventListener("touchmove",e=>movePlayer(e.touches[0].clientX));
+</script>
+
+</body>
+</html>
